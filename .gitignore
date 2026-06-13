@@ -1,0 +1,13 @@
+# Build output
+ClaudeMeter.app/
+build/
+*.dmg
+*.zip
+
+# Secrets — never commit your OAuth token
+claude-token
+*.token
+.env
+
+# macOS
+.DS_Store
