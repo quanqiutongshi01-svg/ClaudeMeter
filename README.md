@@ -1,5 +1,15 @@
 # ClaudeMeter
 
+<p align="center">
+  <img src="assets/app-icon.png" alt="ClaudeMeter app icon" width="96" height="96">
+</p>
+
+[![Release](https://img.shields.io/github/v/release/quanqiutongshi01-svg/ClaudeMeter?style=flat-square)](https://github.com/quanqiutongshi01-svg/ClaudeMeter/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
+[![macOS 14+](https://img.shields.io/badge/macOS-14%2B-111827?logo=apple&style=flat-square)](README.md#-requirements)
+[![Swift](https://img.shields.io/badge/Swift-AppKit%20%2B%20SwiftUI-F05138?logo=swift&logoColor=white&style=flat-square)](main.swift)
+[![Claude Code](https://img.shields.io/badge/Claude%20Code-usage%20meter-5D5FEF?style=flat-square)](docs/TECHNICAL.md)
+
 A tiny native macOS **menu-bar app** that shows your **official Claude Code usage** — the same 5-hour and weekly limit numbers you see in *Settings → Usage* — right in your menu bar, plus a draggable translucent floating panel.
 
 No Electron, no background daemon, ~5 MB, written in a single Swift file.
@@ -108,7 +118,7 @@ Full details, including the exact request and why the system prompt must start w
 
 ## 🤝 Contributing
 
-Issues and PRs welcome — extra windows/stats, an app icon, Intel builds, Codex support, etc.
+Issues and PRs welcome — extra windows/stats, Intel builds, Codex support, etc.
 
 ## 📄 License
 

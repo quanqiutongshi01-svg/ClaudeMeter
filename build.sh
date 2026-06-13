@@ -7,11 +7,40 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 APP="$DIR/ClaudeMeter.app"
 BIN_NAME="ClaudeMeter"
 BUNDLE_ID="com.claudemeter.ClaudeMeter"
-VERSION="1.0.0"
+VERSION="1.0.1"
+ICON_SRC="$DIR/assets/app-icon.png"
+ICONSET="$DIR/build/AppIcon.iconset"
+ICON_ICNS="$DIR/build/AppIcon.icns"
 
 echo "==> Cleaning old bundle"
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$DIR/build"
+
+if [[ -f "$ICON_SRC" ]]; then
+    echo "==> Generating AppIcon.icns"
+    rm -rf "$ICONSET"
+    mkdir -p "$ICONSET"
+    make_icon() {
+        local points="$1"
+        local pixels="$2"
+        local suffix="$3"
+        sips -z "$pixels" "$pixels" "$ICON_SRC" --out "$ICONSET/icon_${points}x${points}${suffix}.png" >/dev/null
+    }
+    make_icon 16 16 ""
+    make_icon 16 32 "@2x"
+    make_icon 32 32 ""
+    make_icon 32 64 "@2x"
+    make_icon 128 128 ""
+    make_icon 128 256 "@2x"
+    make_icon 256 256 ""
+    make_icon 256 512 "@2x"
+    make_icon 512 512 ""
+    make_icon 512 1024 "@2x"
+    iconutil -c icns "$ICONSET" -o "$ICON_ICNS"
+    cp "$ICON_ICNS" "$APP/Contents/Resources/AppIcon.icns"
+else
+    echo "==> No app icon source found; building without a custom icon"
+fi
 
 echo "==> Writing Info.plist (LSUIElement = menu-bar agent, no Dock icon)"
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -25,6 +54,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleVersion</key>         <string>${VERSION}</string>
     <key>CFBundleShortVersionString</key><string>${VERSION}</string>
     <key>CFBundleExecutable</key>      <string>${BIN_NAME}</string>
+    <key>CFBundleIconFile</key>        <string>AppIcon</string>
     <key>CFBundlePackageType</key>     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>  <string>14.0</string>
     <key>LSUIElement</key>             <true/>
