@@ -383,7 +383,18 @@ enum CodexFetcher {
             .appendingPathComponent("tokenmeter-\(UUID().uuidString)-\(dbURL.lastPathComponent)")
         do {
             try FileManager.default.copyItem(at: dbURL, to: tmp)
-            defer { try? FileManager.default.removeItem(at: tmp) }
+            for suffix in ["-wal", "-shm"] {
+                let companion = URL(fileURLWithPath: dbURL.path + suffix)
+                let tmpCompanion = URL(fileURLWithPath: tmp.path + suffix)
+                if FileManager.default.fileExists(atPath: companion.path) {
+                    try? FileManager.default.copyItem(at: companion, to: tmpCompanion)
+                }
+            }
+            defer {
+                try? FileManager.default.removeItem(at: tmp)
+                try? FileManager.default.removeItem(at: URL(fileURLWithPath: tmp.path + "-wal"))
+                try? FileManager.default.removeItem(at: URL(fileURLWithPath: tmp.path + "-shm"))
+            }
             return readLatestEventDirectly(from: tmp)
         } catch {
             return .failure("Could not read \(dbURL.lastPathComponent): \(error.localizedDescription)")
@@ -1002,12 +1013,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func openCodex() {
-        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.openai.codex") {
-            NSWorkspace.shared.open(url)
-            return
+        let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.openai.codex")
+            ?? URL(fileURLWithPath: "/Applications/Codex.app")
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = true
+        NSWorkspace.shared.openApplication(at: appURL, configuration: config) { [weak self] app, _ in
+            app?.unhide()
+            app?.activate(options: [.activateAllWindows])
+            if app == nil, let running = NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.codex").first {
+                running.unhide()
+                running.activate(options: [.activateAllWindows])
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8) { self?.refresh() }
         }
-        let fallback = URL(fileURLWithPath: "/Applications/Codex.app")
-        NSWorkspace.shared.open(fallback)
     }
 }
 

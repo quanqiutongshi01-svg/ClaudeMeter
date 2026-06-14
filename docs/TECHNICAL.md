@@ -165,7 +165,7 @@ This keeps TokenMeter honest:
 `build.sh` produces `TokenMeter.app`:
 
 - Bundle ID: `com.tokenmeter.TokenMeter`
-- Version: `2.0.0`
+- Version: `2.0.1`
 - App icon: generated from `assets/app-icon.png`
 - Menu-bar agent: `LSUIElement=true`
 - Minimum macOS: 14.0
@@ -347,7 +347,7 @@ OpenAI 公开 Codex 文档说明了计划用量窗口和 rate-limit 概念，但
 `build.sh` 会生成 `TokenMeter.app`：
 
 - Bundle ID：`com.tokenmeter.TokenMeter`
-- 版本：`2.0.0`
+- 版本：`2.0.1`
 - App 图标：由 `assets/app-icon.png` 生成
 - 菜单栏代理：`LSUIElement=true`
 - 最低 macOS：14.0
