@@ -151,7 +151,7 @@ When Codex is stale or unavailable, TokenMeter does not probe the model. It asks
 
 Claude has a low-cost inference-header path that returns official usage. Codex does not currently expose an equivalent public personal quota endpoint for a third-party menu-bar app.
 
-OpenAI's public Codex docs describe plan usage windows and rate-limit concepts, but not a stable local REST endpoint for current personal usage. Current Codex desktop builds receive `codex.rate_limits` over their own websocket stream and may log it locally. TokenMeter reads that local log only.
+OpenAI's public Codex docs describe plan usage windows and rate-limit concepts, but not a stable local REST endpoint for current personal usage. Current Codex desktop builds receive `codex.rate_limits` over their own websocket stream and may log it locally. TokenMeter reads local logs only, scanning both `~/.codex/logs_2.sqlite` and `~/.codex/sqlite/logs_2.sqlite` and choosing the freshest parseable snapshot.
 
 This keeps TokenMeter honest:
 
@@ -165,7 +165,7 @@ This keeps TokenMeter honest:
 `build.sh` produces `TokenMeter.app`:
 
 - Bundle ID: `com.tokenmeter.TokenMeter`
-- Version: `2.0.1`
+- Version: `2.0.2`
 - App icon: generated from `assets/app-icon.png`
 - Menu-bar agent: `LSUIElement=true`
 - Minimum macOS: 14.0
@@ -333,7 +333,7 @@ Codex 数据不是实时 API 读取，所以 TokenMeter 会标记新鲜度：
 
 Claude 有低成本的推理响应头路径，可以返回官方用量。Codex 目前没有给第三方菜单栏 App 使用的公开个人额度 REST 接口。
 
-OpenAI 公开 Codex 文档说明了计划用量窗口和 rate-limit 概念，但没有提供稳定的本地当前用量接口。当前 Codex 桌面版通过自己的 websocket stream 接收 `codex.rate_limits`，并可能写入本机日志。TokenMeter 只读取这个本机日志。
+OpenAI 公开 Codex 文档说明了计划用量窗口和 rate-limit 概念，但没有提供稳定的本地当前用量接口。当前 Codex 桌面版通过自己的 websocket stream 接收 `codex.rate_limits`，并可能写入本机日志。TokenMeter 只读取本机日志，会同时扫描 `~/.codex/logs_2.sqlite` 与 `~/.codex/sqlite/logs_2.sqlite`，并选择最新、可解析的快照。
 
 这样做的边界更清楚：
 
@@ -347,7 +347,7 @@ OpenAI 公开 Codex 文档说明了计划用量窗口和 rate-limit 概念，但
 `build.sh` 会生成 `TokenMeter.app`：
 
 - Bundle ID：`com.tokenmeter.TokenMeter`
-- 版本：`2.0.1`
+- 版本：`2.0.2`
 - App 图标：由 `assets/app-icon.png` 生成
 - 菜单栏代理：`LSUIElement=true`
 - 最低 macOS：14.0

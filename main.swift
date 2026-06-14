@@ -110,6 +110,7 @@ final class UsageState: ObservableObject {
     @Published var lastUpdate: Date?
     @Published var loading = false
     @Published var tick = 0
+    @Published var codexActionMessage: String?
 }
 
 struct FetchResult {
@@ -273,6 +274,7 @@ enum CodexFetcher {
     static func fetch() -> ProviderUsage {
         let fm = FileManager.default
         var lastError: String?
+        var matches: [ProviderUsage] = []
 
         for home in HomePaths.candidates() {
             for candidate in candidatePaths {
@@ -282,11 +284,17 @@ enum CodexFetcher {
                 guard fm.fileExists(atPath: url.path) else { continue }
                 switch readLatestEvent(from: url) {
                 case .success(let event):
-                    return provider(from: event, source: candidate.label)
+                    matches.append(provider(from: event, source: candidate.label))
                 case .failure(let error):
                     lastError = error
                 }
             }
+        }
+
+        if let best = matches.max(by: { lhs, rhs in
+            codexProviderRank(lhs) < codexProviderRank(rhs)
+        }) {
+            return best
         }
 
         return ProviderUsage(
@@ -304,6 +312,17 @@ enum CodexFetcher {
             error: lastError ?? "No codex.rate_limits event found in local logs.",
             hint: "Open Codex, complete one request, then refresh TokenMeter."
         )
+    }
+
+    private static func codexProviderRank(_ provider: ProviderUsage) -> (Int, TimeInterval) {
+        let freshnessScore: Int
+        switch provider.freshness {
+        case .live: freshnessScore = 4
+        case .stale: freshnessScore = 3
+        case .unavailable where provider.hasUsableData: freshnessScore = 2
+        case .missingToken, .unavailable, .error: freshnessScore = 1
+        }
+        return (freshnessScore, provider.observedAt?.timeIntervalSince1970 ?? 0)
     }
 
     static func defaultWindows() -> [UsageWindow] {
@@ -415,8 +434,7 @@ enum CodexFetcher {
         let sql = """
         SELECT feedback_log_body
         FROM logs
-        WHERE feedback_log_body LIKE '%codex.rate_limits%'
-          AND feedback_log_body LIKE '%websocket event:%'
+        WHERE feedback_log_body LIKE '%websocket event: {"type":"codex.rate_limits"%'
         ORDER BY id DESC
         LIMIT 40
         """
@@ -593,6 +611,7 @@ struct UsageBar: View {
 
 struct ProviderCard: View {
     var provider: ProviderUsage
+    var codexActionMessage: String?
     var onOpenCodex: () -> Void
 
     var body: some View {
@@ -658,6 +677,17 @@ struct ProviderCard: View {
                     }
                 }
             }
+
+            if provider.id == "codex", let codexActionMessage {
+                HStack(spacing: 6) {
+                    Image(systemName: "info.circle.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text(codexActionMessage)
+                        .font(.system(size: 10))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .foregroundColor(Color(red: 0.72, green: 0.88, blue: 1.0).opacity(0.92))
+            }
         }
         .padding(12)
         .background(Color.white.opacity(0.07))
@@ -720,7 +750,11 @@ struct PanelView: View {
         VStack(alignment: .leading, spacing: 12) {
             header
             ForEach(state.providers) { provider in
-                ProviderCard(provider: provider, onOpenCodex: onOpenCodex)
+                ProviderCard(
+                    provider: provider,
+                    codexActionMessage: provider.id == "codex" ? state.codexActionMessage : nil,
+                    onOpenCodex: onOpenCodex
+                )
             }
             tasksSection
             footer
@@ -970,6 +1004,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         state.providers = result.providers
         state.tasks = result.tasks
         state.lastUpdate = Date()
+        if let codex = result.providers.first(where: { $0.id == "codex" }),
+           let message = state.codexActionMessage {
+            switch codex.freshness {
+            case .live, .stale:
+                state.codexActionMessage = nil
+            case .missingToken, .unavailable, .error:
+                if message.hasPrefix("Opening") || message.hasPrefix("Codex is open") {
+                    state.codexActionMessage = "Codex is open, but no new rate-limit snapshot was written yet. Send one Codex prompt, wait for the response, then refresh."
+                }
+            }
+        }
         updateStatusTitle()
         if panel.isVisible {
             refitPanel()
@@ -1013,18 +1058,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func openCodex() {
+        state.codexActionMessage = "Opening Codex..."
+        if panel.isVisible { refitPanel() }
+
+        if let running = NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.codex").first {
+            running.unhide()
+            running.activate(options: [.activateAllWindows])
+        }
+
         let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.openai.codex")
             ?? URL(fileURLWithPath: "/Applications/Codex.app")
         let config = NSWorkspace.OpenConfiguration()
         config.activates = true
         NSWorkspace.shared.openApplication(at: appURL, configuration: config) { [weak self] app, _ in
-            app?.unhide()
-            app?.activate(options: [.activateAllWindows])
-            if app == nil, let running = NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.codex").first {
-                running.unhide()
-                running.activate(options: [.activateAllWindows])
+            DispatchQueue.main.async {
+                app?.unhide()
+                app?.activate(options: [.activateAllWindows])
+                if app == nil {
+                    self?.openCodexWithSystemOpen()
+                }
+                self?.state.codexActionMessage = "Codex is open. Complete one Codex request; TokenMeter will refresh automatically."
+                self?.scheduleCodexRefreshes()
+                if self?.panel.isVisible == true { self?.refitPanel() }
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 8) { self?.refresh() }
+        }
+    }
+
+    private func openCodexWithSystemOpen() {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = ["-b", "com.openai.codex"]
+        try? process.run()
+    }
+
+    private func scheduleCodexRefreshes() {
+        for delay in [3.0, 12.0, 30.0, 75.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.refresh()
+            }
         }
     }
 }
