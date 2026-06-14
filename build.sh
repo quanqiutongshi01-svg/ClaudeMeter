@@ -1,19 +1,19 @@
 #!/bin/bash
-# Build ClaudeMeter.app from a single Swift source file using swiftc.
+# Build TokenMeter.app from a single Swift source file using swiftc.
 # Requires: Xcode Command Line Tools (xcode-select --install), macOS 14+.
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
-APP="$DIR/ClaudeMeter.app"
-BIN_NAME="ClaudeMeter"
-BUNDLE_ID="com.claudemeter.ClaudeMeter"
-VERSION="1.0.1"
+APP="$DIR/TokenMeter.app"
+BIN_NAME="TokenMeter"
+BUNDLE_ID="com.tokenmeter.TokenMeter"
+VERSION="2.0.0"
 ICON_SRC="$DIR/assets/app-icon.png"
 ICONSET="$DIR/build/AppIcon.iconset"
 ICON_ICNS="$DIR/build/AppIcon.icns"
 
 echo "==> Cleaning old bundle"
-rm -rf "$APP"
+rm -rf "$APP" "$DIR/ClaudeMeter.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$DIR/build"
 
 if [[ -f "$ICON_SRC" ]]; then
@@ -48,8 +48,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key>            <string>ClaudeMeter</string>
-    <key>CFBundleDisplayName</key>     <string>ClaudeMeter</string>
+    <key>CFBundleName</key>            <string>TokenMeter</string>
+    <key>CFBundleDisplayName</key>     <string>TokenMeter</string>
     <key>CFBundleIdentifier</key>      <string>${BUNDLE_ID}</string>
     <key>CFBundleVersion</key>         <string>${VERSION}</string>
     <key>CFBundleShortVersionString</key><string>${VERSION}</string>
@@ -68,7 +68,8 @@ swiftc -O \
     -target arm64-apple-macos14.0 \
     "$DIR/main.swift" \
     -o "$APP/Contents/MacOS/${BIN_NAME}" \
-    -framework AppKit
+    -framework AppKit \
+    -lsqlite3
 
 echo "==> Ad-hoc code signing"
 codesign --force --sign - "$APP" 2>/dev/null || echo "(signing skipped)"

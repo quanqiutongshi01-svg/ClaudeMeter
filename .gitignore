@@ -1,5 +1,6 @@
 # Build output
 ClaudeMeter.app/
+TokenMeter.app/
 build/
 *.dmg
 *.zip

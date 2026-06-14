@@ -1,32 +1,61 @@
-# ClaudeMeter — Technical Notes
+# TokenMeter Technical Notes
 
-How ClaudeMeter gets the **official** Claude usage numbers, how the app is put together, and what was ruled out along the way.
+TokenMeter combines two very different quota surfaces:
+
+- Claude Code exposes official usage through Anthropic inference response headers.
+- Codex currently exposes useful rate-limit snapshots only as local websocket log events.
+
+The app keeps those sources separate and labels Codex freshness explicitly.
 
 ---
 
-## 1. The core problem: where do the official numbers live?
+## 1. Architecture
 
-The Claude desktop app's *Settings → Usage* shows a 5-hour "Current session" gauge and a weekly "All models" gauge. We want the same numbers in a menu bar.
+TokenMeter is a single-file native macOS app (`main.swift`) built with AppKit + SwiftUI:
 
-Things that **don't** work:
+```text
+NSStatusItem
+  -> compact menu title: Cl 9% · ~Cx 59%
+  -> click opens FloatingPanel
 
-| Approach | Why it fails |
-|---|---|
-| Parse `~/.claude/projects/**/*.jsonl` and sum tokens (e.g. via `ccusage`) | This is an **estimate**. It sums raw tokens (incl. cache reads) and divides by a *guessed* limit. The official % is **server-side weighted** (cache reads are cheaper, models weighted, real plan ceiling), so it diverges badly — e.g. estimate said 8 % while the official 5h gauge said 48 %. |
-| `GET https://api.anthropic.com/api/oauth/usage` | This is the endpoint the CLI's `/usage` uses, and it returns exact per-window utilization. **But it requires the `user:profile` OAuth scope.** A token from `claude setup-token` lacks it → `403 permission_error: OAuth token does not meet scope requirement user:profile`. The scope *does* exist on the interactive login token, but that lives in the desktop app's managed session (not in a standard file/keychain) and rotates — not reliable to read. |
-| Scrape the desktop app's `claude.ai` IndexedDB / HTTP cache | The fetched usage is held transiently, structured-clone encoded, and blobs rotate. Fragile. |
+AppDelegate
+  -> data timer, every 120s
+       ClaudeFetcher.fetch()
+       CodexFetcher.fetch()
+       Fetcher.fetchTasks()
+  -> UI timer, every 30s
+       redraw countdowns only
 
-## 2. The solution: rate-limit response headers
+PanelView
+  -> ProviderCard(Claude Code)
+  -> ProviderCard(Codex)
+  -> Claude task list
+  -> launch at login / refresh / quit controls
+```
 
-Every **inference** response from `api.anthropic.com` carries unified rate-limit headers describing the subscription's 5-hour and weekly windows. A `claude setup-token` token has the inference scope, so it **can** make this call — and the headers give us exactly what we need, no `user:profile` required.
+The data model is provider-based:
 
-ClaudeMeter sends the smallest possible request (`max_tokens: 1`) and ignores the body — only the headers matter.
+- `ProviderUsage`: provider name, source, freshness, windows, status, error, hint.
+- `UsageWindow`: 5-hour or weekly window, used fraction, reset time, status.
+- `ProviderFreshness`: `live`, `stale`, `unavailable`, `missingToken`, or `error`.
 
-### The request
+## 2. Claude Code Source
+
+Claude support is active and official-header based.
+
+TokenMeter reads the token from:
+
+```text
+~/.claude/ccmenubar/claude-token
+```
+
+Home resolution checks `$HOME` first, then the system account home and `/Users/<username>`. This avoids missing data on Macs where the account home and shell `HOME` differ.
+
+It sends a tiny Anthropic Messages request:
 
 ```http
 POST https://api.anthropic.com/v1/messages
-Authorization: Bearer sk-ant-oat01-…        # from `claude setup-token`
+Authorization: Bearer sk-ant-oat01-...
 anthropic-beta: oauth-2025-04-20
 anthropic-version: 2023-06-01
 content-type: application/json
@@ -39,77 +68,294 @@ content-type: application/json
 }
 ```
 
-Two non-obvious requirements:
+The response body is ignored. TokenMeter reads these headers:
 
-1. **`anthropic-beta: oauth-2025-04-20`** — without the oauth beta flag the token isn't accepted.
-2. **The `system` prompt must start with `You are Claude Code, Anthropic's official CLI for Claude.`** — subscription OAuth tokens are authorized only for Claude Code-style traffic; a request that doesn't look like Claude Code is rejected. This prefix satisfies that check. (We use the cheapest model and 1 output token to keep it trivial.)
-
-### The response headers we read
-
-```
-anthropic-ratelimit-unified-status:            allowed        # overall: allowed | allowed_warning | rejected
-anthropic-ratelimit-unified-5h-utilization:    0.09           # 5-hour window, fraction used (0–1)
-anthropic-ratelimit-unified-5h-reset:          1781328600     # unix epoch seconds
-anthropic-ratelimit-unified-5h-status:         allowed
-anthropic-ratelimit-unified-7d-utilization:    0.23           # weekly window, fraction used
-anthropic-ratelimit-unified-7d-reset:          1781805600
-anthropic-ratelimit-unified-7d-status:         allowed
-anthropic-ratelimit-unified-representative-claim: five_hour
+```text
+anthropic-ratelimit-unified-5h-utilization
+anthropic-ratelimit-unified-5h-reset
+anthropic-ratelimit-unified-5h-status
+anthropic-ratelimit-unified-7d-utilization
+anthropic-ratelimit-unified-7d-reset
+anthropic-ratelimit-unified-7d-status
+anthropic-ratelimit-unified-status
 ```
 
-- `5h` → *Settings → Usage* "Current session". `7d` → "Weekly / All models".
-- `utilization` is a fraction; multiply by 100 for the percent the UI shows. Remaining = `1 − utilization`.
-- `reset` is absolute epoch seconds — used for both the live countdown and the absolute clock ("today 13:30", "周五 02:00"). Using the absolute value means the countdown never drifts.
+Claude utilization is a fraction from `0` to `1`. Reset values are epoch seconds.
 
-These match *Settings → Usage* to the percent (modulo the few seconds between reads). The weekly `reset` even lands on the exact "Resets Fri 2:00 AM" the UI shows.
+## 3. Codex Source
 
-## 3. App architecture
+Codex support is passive and best effort.
 
-Single Swift file (`main.swift`), AppKit + SwiftUI, no external dependencies.
+TokenMeter tries these local SQLite databases in order:
 
-```
-NSStatusItem (menu bar)  ── click ──▶  FloatingPanel (NSPanel)
-        │                                   │
-        │  title: 🟢 5h 9%·4h32m · 周 23%·5d17h
-        │                                   └─ NSHostingView(PanelView)  ← SwiftUI, dark HUD glass
-        ▼
-   AppDelegate
-     ├─ dataTimer (120 s) ─▶ Fetcher.fetchAll() on a background queue
-     │                          ├─ loadToken()        ~/.claude/ccmenubar/claude-token
-     │                          ├─ fetchOfficial()    POST /v1/messages, read headers (URLSession + semaphore)
-     │                          └─ fetchTasks()        newest ~/.claude/tasks/<session>/*.json
-     └─ uiTimer  (30 s)  ─▶ bump a tick + redraw countdowns (no network)
+```text
+~/.codex/logs_2.sqlite
+~/.codex/sqlite/logs_2.sqlite
 ```
 
-- **Polling:** the 120 s data timer does the network read; the 30 s UI timer only re-renders the countdown from the stored `reset` Date, so the menu bar ticks down smoothly without extra requests.
-- **Panel:** `NSPanel` with `.borderless + .nonactivatingPanel`, `level = .floating`, `isMovableByWindowBackground = true`, an `NSVisualEffectView(.hudWindow)` background, dark appearance. `canBecomeKey` is overridden so the in-panel buttons receive clicks.
-- **Menu bar agent:** `NSApp.setActivationPolicy(.accessory)` + `LSUIElement` → no Dock icon.
-- **Launch at login:** `SMAppService.mainApp.register()`.
-- **`--render <path.png>`:** an offline mode that rasterizes the panel (with live data) to a PNG via SwiftUI `ImageRenderer` — handy for docs/screenshots and for verifying the UI without screen-recording permission. `CCMETER_SHOW=1` auto-opens the panel on launch (debug).
+The same home-resolution fallback is used for Codex logs.
 
-## 4. Token: storage, scope, security
+It queries recent rows from the `logs` table where `feedback_log_body` contains both:
 
-- Minted by `claude setup-token` (requires a Claude subscription); valid ~1 year.
-- Stored in plain text at `~/.claude/ccmenubar/claude-token`; the app trims whitespace on read. `chmod 600` recommended.
-- Scope is inference-only — enough for the header trick, **not** enough for `/api/oauth/usage`.
-- The app reads the token only to set the `Authorization` header; it is never logged, printed, or sent anywhere except `api.anthropic.com`.
-- The home directory is resolved via `FileManager.homeDirectoryForCurrentUser`, so relocated/`CLAUDE_CONFIG_DIR`-style setups that move `~` still resolve to the right `.claude`.
+```text
+codex.rate_limits
+websocket event:
+```
 
-## 5. Why Codex isn't supported (investigation summary)
+Then it extracts and parses the JSON after `websocket event:`.
 
-The Codex desktop app (OpenAI) was investigated as a second provider. Findings:
+Typical event shape:
 
-- Its official rate-limit snapshot (`codex.rate_limits` → `primary` = 5h / `secondary` = weekly, with `used_percent` + `reset_at`) is only **incidentally** logged to `~/.codex/logs_2.sqlite` (`logs.feedback_log_body`).
-- On a real machine that table was **pruned to zero live rows**; current Codex builds keep the live value in the renderer/websocket and **don't persist a fresh, pollable copy**.
-- There is **no REST usage endpoint** — rate limits arrive embedded in the `responses_websocket` stream, so a passive monitor can't poll them without making a real model turn.
+```json
+{
+  "type": "codex.rate_limits",
+  "plan_type": "pro",
+  "rate_limits": {
+    "allowed": true,
+    "limit_reached": false,
+    "primary": {
+      "used_percent": 1,
+      "window_minutes": 300,
+      "reset_after_seconds": 17306,
+      "reset_at": 1781319647
+    },
+    "secondary": {
+      "used_percent": 59,
+      "window_minutes": 10080,
+      "reset_after_seconds": 54199,
+      "reset_at": 1781356541
+    }
+  }
+}
+```
 
-Net: a background menu-bar reader can't reliably obtain current Codex usage today. If a future Codex build persists the snapshot, the same header/snapshot pattern used here would slot in.
+Mapping:
+
+- `primary` -> 5-hour Codex window.
+- `secondary` -> weekly Codex window.
+- `used_percent` is normalized to a `0...1` fraction for UI rendering.
+- `reset_at` is epoch seconds.
+- `observedAt` is inferred as `reset_at - reset_after_seconds`.
+
+## 4. Codex Freshness
+
+Codex data is not a live API read. TokenMeter therefore labels freshness:
+
+- **fresh**: latest inferred observation is <= 10 minutes old.
+- **stale**: latest snapshot is older than 10 minutes but at least one reset time is still in the future.
+- **unavailable**: no parseable event, database unreadable, or all reset windows are already in the past.
+
+When Codex is stale or unavailable, TokenMeter does not probe the model. It asks the user to open Codex, complete one normal request, and refresh.
+
+## 5. Why No Active Codex Probe?
+
+Claude has a low-cost inference-header path that returns official usage. Codex does not currently expose an equivalent public personal quota endpoint for a third-party menu-bar app.
+
+OpenAI's public Codex docs describe plan usage windows and rate-limit concepts, but not a stable local REST endpoint for current personal usage. Current Codex desktop builds receive `codex.rate_limits` over their own websocket stream and may log it locally. TokenMeter reads that local log only.
+
+This keeps TokenMeter honest:
+
+- no hidden Codex request;
+- no quota spent just for monitoring;
+- no scraping browser sessions or private storage;
+- clear stale/unavailable state when the local snapshot is old.
 
 ## 6. Build
 
-`build.sh` compiles `main.swift` with `swiftc -O` into a `.app` bundle:
+`build.sh` produces `TokenMeter.app`:
 
-- Writes `Info.plist` with `LSUIElement=true` (menu-bar agent) and `LSMinimumSystemVersion=14.0`.
-- `-target arm64-apple-macos14.0` (change to `x86_64-…` for Intel).
-- Ad-hoc code signs (`codesign --sign -`). Not notarized — a downloaded build needs a right-click → Open, or quarantine removal. Building locally avoids the prompt.
-- SwiftUI's two-parameter `onChange` and `SMAppService` require the macOS 14 target.
+- Bundle ID: `com.tokenmeter.TokenMeter`
+- Version: `2.0.0`
+- App icon: generated from `assets/app-icon.png`
+- Menu-bar agent: `LSUIElement=true`
+- Minimum macOS: 14.0
+- Linker: `-framework AppKit -lsqlite3`
+
+Debug helpers:
+
+```bash
+TOKENMETER_SHOW=1 open TokenMeter.app
+./TokenMeter.app/Contents/MacOS/TokenMeter --render assets/screenshot.png
+```
+
+---
+
+# TokenMeter 技术说明（中文）
+
+TokenMeter 合并了两个完全不同的额度来源：
+
+- Claude Code 通过 Anthropic 推理响应头暴露官方用量。
+- Codex 目前只能从本机 websocket 日志里读到有用的 rate-limit 快照。
+
+App 会把这两种来源分开处理，并明确显示 Codex 数据的新鲜度。
+
+---
+
+## 1. 架构
+
+TokenMeter 是一个单文件原生 macOS App（`main.swift`），使用 AppKit + SwiftUI：
+
+```text
+NSStatusItem
+  -> 菜单栏紧凑标题：Cl 9% · ~Cx 59%
+  -> 点击打开 FloatingPanel
+
+AppDelegate
+  -> 数据定时器，每 120 秒
+       ClaudeFetcher.fetch()
+       CodexFetcher.fetch()
+       Fetcher.fetchTasks()
+  -> UI 定时器，每 30 秒
+       只刷新倒计时，不发网络请求
+
+PanelView
+  -> ProviderCard(Claude Code)
+  -> ProviderCard(Codex)
+  -> Claude 当前任务列表
+  -> 开机自启 / 刷新 / 退出
+```
+
+数据模型按 provider 拆分：
+
+- `ProviderUsage`：provider 名称、数据来源、新鲜度、窗口、状态、错误、提示。
+- `UsageWindow`：5 小时或每周窗口、已用比例、重置时间、状态。
+- `ProviderFreshness`：`live`、`stale`、`unavailable`、`missingToken`、`error`。
+
+## 2. Claude Code 数据来源
+
+Claude 支持是主动读取、官方响应头口径。
+
+TokenMeter 从这里读取 token：
+
+```text
+~/.claude/ccmenubar/claude-token
+```
+
+Home 路径解析会优先使用 `$HOME`，再回退到系统账号 home 和 `/Users/<username>`，避免 macOS 账号 home 与 shell `HOME` 不一致时读错位置。
+
+然后发送一个极小的 Anthropic Messages 请求：
+
+```http
+POST https://api.anthropic.com/v1/messages
+Authorization: Bearer sk-ant-oat01-...
+anthropic-beta: oauth-2025-04-20
+anthropic-version: 2023-06-01
+content-type: application/json
+
+{
+  "model": "claude-haiku-4-5-20251001",
+  "max_tokens": 1,
+  "system": "You are Claude Code, Anthropic's official CLI for Claude.",
+  "messages": [{ "role": "user", "content": "." }]
+}
+```
+
+响应正文会被忽略，只读取这些响应头：
+
+```text
+anthropic-ratelimit-unified-5h-utilization
+anthropic-ratelimit-unified-5h-reset
+anthropic-ratelimit-unified-5h-status
+anthropic-ratelimit-unified-7d-utilization
+anthropic-ratelimit-unified-7d-reset
+anthropic-ratelimit-unified-7d-status
+anthropic-ratelimit-unified-status
+```
+
+Claude 的 utilization 是 `0` 到 `1` 的小数，reset 是 epoch 秒。
+
+## 3. Codex 数据来源
+
+Codex 支持是被动读取、最佳努力。
+
+TokenMeter 按顺序尝试读取：
+
+```text
+~/.codex/logs_2.sqlite
+~/.codex/sqlite/logs_2.sqlite
+```
+
+Codex 日志也使用同一套 home 路径候选。
+
+它查询 `logs` 表中 `feedback_log_body` 同时包含以下内容的最近行：
+
+```text
+codex.rate_limits
+websocket event:
+```
+
+然后解析 `websocket event:` 后面的 JSON。
+
+典型事件结构：
+
+```json
+{
+  "type": "codex.rate_limits",
+  "plan_type": "pro",
+  "rate_limits": {
+    "allowed": true,
+    "limit_reached": false,
+    "primary": {
+      "used_percent": 1,
+      "window_minutes": 300,
+      "reset_after_seconds": 17306,
+      "reset_at": 1781319647
+    },
+    "secondary": {
+      "used_percent": 59,
+      "window_minutes": 10080,
+      "reset_after_seconds": 54199,
+      "reset_at": 1781356541
+    }
+  }
+}
+```
+
+映射关系：
+
+- `primary` -> Codex 5 小时窗口。
+- `secondary` -> Codex 每周窗口。
+- `used_percent` 会转为 `0...1` 小数，供 UI 渲染。
+- `reset_at` 是 epoch 秒。
+- `observedAt` 通过 `reset_at - reset_after_seconds` 推断。
+
+## 4. Codex 新鲜度
+
+Codex 数据不是实时 API 读取，所以 TokenMeter 会标记新鲜度：
+
+- **fresh**：最新推断观察时间在 10 分钟内。
+- **stale**：快照超过 10 分钟，但至少一个 reset 时间仍在未来。
+- **unavailable**：没有可解析事件、数据库不可读，或所有窗口 reset 时间都已经过去。
+
+当 Codex 过期或不可用时，TokenMeter 不会主动探测模型，只提示用户打开 Codex、正常完成一次请求后刷新。
+
+## 5. 为什么不主动探测 Codex？
+
+Claude 有低成本的推理响应头路径，可以返回官方用量。Codex 目前没有给第三方菜单栏 App 使用的公开个人额度 REST 接口。
+
+OpenAI 公开 Codex 文档说明了计划用量窗口和 rate-limit 概念，但没有提供稳定的本地当前用量接口。当前 Codex 桌面版通过自己的 websocket stream 接收 `codex.rate_limits`，并可能写入本机日志。TokenMeter 只读取这个本机日志。
+
+这样做的边界更清楚：
+
+- 不偷偷发 Codex 请求；
+- 不为了监控而消耗额度；
+- 不抓浏览器会话或私有存储；
+- 本机快照过旧时明确显示 stale/unavailable。
+
+## 6. 构建
+
+`build.sh` 会生成 `TokenMeter.app`：
+
+- Bundle ID：`com.tokenmeter.TokenMeter`
+- 版本：`2.0.0`
+- App 图标：由 `assets/app-icon.png` 生成
+- 菜单栏代理：`LSUIElement=true`
+- 最低 macOS：14.0
+- 链接参数：`-framework AppKit -lsqlite3`
+
+调试命令：
+
+```bash
+TOKENMETER_SHOW=1 open TokenMeter.app
+./TokenMeter.app/Contents/MacOS/TokenMeter --render assets/screenshot.png
+```
