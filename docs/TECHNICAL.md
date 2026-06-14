@@ -15,7 +15,11 @@ TokenMeter is a single-file native macOS app (`main.swift`) built with AppKit + 
 
 ```text
 NSStatusItem
-  -> compact menu title: Cl 9% · ~Cx 59%
+  -> configurable remaining-quota title:
+       5-hour only: Cl 94% · Cx 92%
+       5-hour + weekly: Cl 94%/85% · Cx 92%/96%
+  -> title color is based on the lowest displayed remaining window:
+       green >20%, orange <=20%, red <=10%
   -> click opens FloatingPanel
 
 AppDelegate
@@ -165,7 +169,7 @@ This keeps TokenMeter honest:
 `build.sh` produces `TokenMeter.app`:
 
 - Bundle ID: `com.tokenmeter.TokenMeter`
-- Version: `2.0.2`
+- Version: `2.0.3`
 - App icon: generated from `assets/app-icon.png`
 - Menu-bar agent: `LSUIElement=true`
 - Minimum macOS: 14.0
@@ -197,7 +201,11 @@ TokenMeter 是一个单文件原生 macOS App（`main.swift`），使用 AppKit 
 
 ```text
 NSStatusItem
-  -> 菜单栏紧凑标题：Cl 9% · ~Cx 59%
+  -> 可配置的菜单栏剩余额度标题：
+       只显示 5 小时：Cl 94% · Cx 92%
+       显示 5 小时 + 周窗口：Cl 94%/85% · Cx 92%/96%
+  -> 标题颜色由当前显示窗口中最低剩余额度决定：
+       绿色 >20%，橙色 <=20%，红色 <=10%
   -> 点击打开 FloatingPanel
 
 AppDelegate
@@ -347,7 +355,7 @@ OpenAI 公开 Codex 文档说明了计划用量窗口和 rate-limit 概念，但
 `build.sh` 会生成 `TokenMeter.app`：
 
 - Bundle ID：`com.tokenmeter.TokenMeter`
-- 版本：`2.0.2`
+- 版本：`2.0.3`
 - App 图标：由 `assets/app-icon.png` 生成
 - 菜单栏代理：`LSUIElement=true`
 - 最低 macOS：14.0

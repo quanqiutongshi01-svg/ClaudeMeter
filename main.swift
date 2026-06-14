@@ -92,8 +92,37 @@ struct ProviderUsage: Identifiable {
         windows.first(where: { $0.id == "5h" })?.used ?? worstUsed
     }
 
+    var primaryLeft: Double? {
+        primaryUsed.map { max(0, 1 - $0) }
+    }
+
     var hasUsableData: Bool {
         windows.contains { $0.used != nil || $0.reset != nil }
+    }
+}
+
+enum MenuBarDisplayMode: String, CaseIterable, Identifiable {
+    case fiveHour
+    case fiveHourAndWeekly
+
+    static let defaultsKey = "menuBarDisplayMode"
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .fiveHour: return "5h"
+        case .fiveHourAndWeekly: return "5h + week"
+        }
+    }
+
+    static func load() -> MenuBarDisplayMode {
+        let raw = UserDefaults.standard.string(forKey: defaultsKey) ?? ""
+        return MenuBarDisplayMode(rawValue: raw) ?? .fiveHour
+    }
+
+    func save() {
+        UserDefaults.standard.set(rawValue, forKey: Self.defaultsKey)
     }
 }
 
@@ -111,6 +140,9 @@ final class UsageState: ObservableObject {
     @Published var loading = false
     @Published var tick = 0
     @Published var codexActionMessage: String?
+    @Published var menuBarMode: MenuBarDisplayMode = MenuBarDisplayMode.load() {
+        didSet { menuBarMode.save() }
+    }
 }
 
 struct FetchResult {
@@ -732,11 +764,38 @@ struct ProviderCard: View {
     }
 }
 
+struct MenuBarModeControl: View {
+    @Binding var selection: MenuBarDisplayMode
+    var onChange: () -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(MenuBarDisplayMode.allCases) { mode in
+                Button {
+                    selection = mode
+                    onChange()
+                } label: {
+                    Text(mode.label)
+                        .font(.system(size: 9, weight: .semibold))
+                        .frame(width: 68, height: 20)
+                        .foregroundColor(selection == mode ? .white.opacity(0.92) : .white.opacity(0.48))
+                        .background(selection == mode ? Color.white.opacity(0.18) : Color.clear)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .background(Color.white.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.white.opacity(0.10)))
+    }
+}
+
 struct PanelView: View {
     @ObservedObject var state: UsageState
     var onRefresh: () -> Void
     var onQuit: () -> Void
     var onOpenCodex: () -> Void
+    var onMenuBarModeChange: () -> Void
     var preview: Bool = false
 
     @State private var launchAtLogin = (SMAppService.mainApp.status == .enabled)
@@ -841,6 +900,18 @@ struct PanelView: View {
 
     private var footer: some View {
         VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "menubar.rectangle")
+                    .font(.system(size: 11))
+                    .foregroundColor(.white.opacity(0.65))
+                Text("Menu bar")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.white.opacity(0.62))
+                Spacer()
+                MenuBarModeControl(selection: $state.menuBarMode) {
+                    onMenuBarModeChange()
+                }
+            }
             Divider().overlay(Color.white.opacity(0.12))
             HStack {
                 Button {
@@ -934,7 +1005,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             state: state,
             onRefresh: { [weak self] in self?.refresh() },
             onQuit: { NSApp.terminate(nil) },
-            onOpenCodex: { [weak self] in self?.openCodex() }
+            onOpenCodex: { [weak self] in self?.openCodex() },
+            onMenuBarModeChange: { [weak self] in
+                self?.updateStatusTitle()
+                if self?.panel.isVisible == true { self?.refitPanel() }
+            }
         )
         let hosting = NSHostingView(rootView: root)
         hosting.autoresizingMask = [.width, .height]
@@ -1023,38 +1098,115 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func updateStatusTitle() {
-        guard let button = statusItem.button else { return }
+        guard statusItem.button != nil else { return }
         if state.providers.isEmpty {
-            button.title = "⏳ TokenMeter"
+            setStatusTitle("TokenMeter", color: .secondaryLabelColor, tooltip: nil)
             return
         }
-        let dot = statusDot()
         let parts = state.providers.map { provider in
-            let marker: String
-            let value: Double?
-            switch provider.freshness {
-            case .live:
-                marker = ""
-                value = provider.primaryUsed
-            case .stale:
-                marker = "~"
-                value = provider.primaryUsed
-            case .missingToken, .unavailable, .error:
-                marker = "!"
-                value = nil
-            }
-            return "\(marker)\(provider.shortName) \(fmtPct(value))"
+            menuBarProviderText(provider)
         }
-        button.title = "\(dot) " + parts.joined(separator: " · ")
+        let severity = menuBarSeverity()
+        let title = "\(severity.symbol) " + parts.joined(separator: " · ")
+        setStatusTitle(title, color: severity.color, tooltip: menuBarTooltip())
     }
 
-    private func statusDot() -> String {
-        if state.providers.contains(where: { $0.limitReached == true || $0.freshness == .error }) { return "🔴" }
-        if state.providers.contains(where: { [.stale, .missingToken, .unavailable].contains($0.freshness) }) { return "🟡" }
-        let worst = state.providers.compactMap(\.worstUsed).max() ?? 0
-        if worst >= 0.8 { return "🟡" }
-        if state.providers.contains(where: { $0.hasUsableData }) { return "🟢" }
-        return "⚙︎"
+    private func setStatusTitle(_ title: String, color: NSColor, tooltip: String?) {
+        guard let button = statusItem.button else { return }
+        let font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
+        button.attributedTitle = NSAttributedString(
+            string: title,
+            attributes: [.foregroundColor: color, .font: font]
+        )
+        button.toolTip = tooltip
+    }
+
+    private func menuBarProviderText(_ provider: ProviderUsage) -> String {
+        let prefix: String
+        switch provider.freshness {
+        case .live:
+            prefix = ""
+        case .stale:
+            prefix = "~"
+        case .missingToken, .unavailable, .error:
+            prefix = "!"
+        }
+
+        switch state.menuBarMode {
+        case .fiveHour:
+            return "\(prefix)\(provider.shortName) \(fmtPct(left(for: provider, windowID: "5h")))"
+        case .fiveHourAndWeekly:
+            let fiveHour = fmtPct(left(for: provider, windowID: "5h"))
+            let weekly = fmtPct(left(for: provider, windowID: "weekly"))
+            return "\(prefix)\(provider.shortName) \(fiveHour)/\(weekly)"
+        }
+    }
+
+    private func left(for provider: ProviderUsage, windowID: String) -> Double? {
+        guard let used = provider.windows.first(where: { $0.id == windowID })?.used else { return nil }
+        return max(0, 1 - used)
+    }
+
+    private func displayedRemainingValues() -> [Double] {
+        state.providers.flatMap { provider -> [Double] in
+            switch state.menuBarMode {
+            case .fiveHour:
+                return [left(for: provider, windowID: "5h")].compactMap { $0 }
+            case .fiveHourAndWeekly:
+                return [
+                    left(for: provider, windowID: "5h"),
+                    left(for: provider, windowID: "weekly")
+                ].compactMap { $0 }
+            }
+        }
+    }
+
+    private enum MenuBarSeverity {
+        case healthy
+        case warning
+        case critical
+        case unknown
+
+        var symbol: String {
+            switch self {
+            case .healthy: return "●"
+            case .warning: return "●"
+            case .critical: return "●"
+            case .unknown: return "●"
+            }
+        }
+
+        var color: NSColor {
+            switch self {
+            case .healthy: return .systemGreen
+            case .warning: return .systemOrange
+            case .critical: return .systemRed
+            case .unknown: return .systemYellow
+            }
+        }
+    }
+
+    private func menuBarSeverity() -> MenuBarSeverity {
+        if state.providers.contains(where: { $0.limitReached == true || $0.freshness == .error }) {
+            return .critical
+        }
+        let values = displayedRemainingValues()
+        guard let minimum = values.min() else { return .unknown }
+        if minimum <= 0.10 { return .critical }
+        if minimum <= 0.20 { return .warning }
+        if state.providers.contains(where: { [.stale, .missingToken, .unavailable].contains($0.freshness) }) {
+            return .warning
+        }
+        return .healthy
+    }
+
+    private func menuBarTooltip() -> String {
+        switch state.menuBarMode {
+        case .fiveHour:
+            return "TokenMeter shows remaining 5-hour quota. Orange <=20%, red <=10%."
+        case .fiveHourAndWeekly:
+            return "TokenMeter shows remaining 5-hour/weekly quota. Orange <=20%, red <=10%."
+        }
     }
 
     private func openCodex() {
@@ -1116,7 +1268,14 @@ enum RenderMode {
                 Color(red: 0.11, green: 0.26, blue: 0.19),
                 Color(red: 0.24, green: 0.16, blue: 0.32)
             ], startPoint: .topLeading, endPoint: .bottomTrailing)
-            PanelView(state: state, onRefresh: {}, onQuit: {}, onOpenCodex: {}, preview: true)
+            PanelView(
+                state: state,
+                onRefresh: {},
+                onQuit: {},
+                onOpenCodex: {},
+                onMenuBarModeChange: {},
+                preview: true
+            )
                 .padding(36)
         }
         .frame(width: 460, height: 650)
