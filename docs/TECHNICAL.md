@@ -20,6 +20,7 @@ NSStatusItem
        5-hour + weekly: Cl 94%/85% · Cx 92%/96%
   -> title color is based on the lowest displayed remaining window:
        green >20%, orange <=20%, red <=10%
+     freshness markers such as ~Cx do not change this color alone
   -> click opens FloatingPanel
 
 AppDelegate
@@ -169,7 +170,7 @@ This keeps TokenMeter honest:
 `build.sh` produces `TokenMeter.app`:
 
 - Bundle ID: `com.tokenmeter.TokenMeter`
-- Version: `2.0.3`
+- Version: `2.0.4`
 - App icon: generated from `assets/app-icon.png`
 - Menu-bar agent: `LSUIElement=true`
 - Minimum macOS: 14.0
@@ -206,6 +207,7 @@ NSStatusItem
        显示 5 小时 + 周窗口：Cl 94%/85% · Cx 92%/96%
   -> 标题颜色由当前显示窗口中最低剩余额度决定：
        绿色 >20%，橙色 <=20%，红色 <=10%
+     ~Cx 等新鲜度标记本身不会改变菜单栏颜色
   -> 点击打开 FloatingPanel
 
 AppDelegate
@@ -355,7 +357,7 @@ OpenAI 公开 Codex 文档说明了计划用量窗口和 rate-limit 概念，但
 `build.sh` 会生成 `TokenMeter.app`：
 
 - Bundle ID：`com.tokenmeter.TokenMeter`
-- 版本：`2.0.3`
+- 版本：`2.0.4`
 - App 图标：由 `assets/app-icon.png` 生成
 - 菜单栏代理：`LSUIElement=true`
 - 最低 macOS：14.0

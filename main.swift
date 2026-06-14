@@ -1194,9 +1194,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let minimum = values.min() else { return .unknown }
         if minimum <= 0.10 { return .critical }
         if minimum <= 0.20 { return .warning }
-        if state.providers.contains(where: { [.stale, .missingToken, .unavailable].contains($0.freshness) }) {
-            return .warning
-        }
         return .healthy
     }
 
