@@ -162,6 +162,10 @@ enum HomePaths {
         add(ProcessInfo.processInfo.environment["HOME"])
         add(FileManager.default.homeDirectoryForCurrentUser.path)
         add(NSHomeDirectory())
+        add(NSHomeDirectoryForUser(NSUserName()))
+        if let entry = getpwuid(getuid()), let home = entry.pointee.pw_dir {
+            add(String(cString: home))
+        }
         add("/Users/\(NSUserName())")
         return urls
     }

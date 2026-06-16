@@ -54,7 +54,7 @@ TokenMeter reads the token from:
 ~/.claude/ccmenubar/claude-token
 ```
 
-Home resolution checks `$HOME` first, then the system account home and `/Users/<username>`. This avoids missing data on Macs where the account home and shell `HOME` differ.
+Home resolution checks `$HOME`, `FileManager.homeDirectoryForCurrentUser`, `NSHomeDirectory()`, `NSHomeDirectoryForUser`, the POSIX account database home, and `/Users/<username>`. This avoids missing data on Macs where the GUI process `HOME` differs from the real account home, for example when the account home lives on an external volume.
 
 It sends a tiny Anthropic Messages request:
 
@@ -173,7 +173,7 @@ This keeps TokenMeter honest:
 `build.sh` produces `TokenMeter.app`:
 
 - Bundle ID: `com.tokenmeter.TokenMeter`
-- Version: `2.0.5`
+- Version: `2.0.6`
 - App icon: generated from `assets/app-icon.png`
 - Menu-bar agent: `LSUIElement=true`
 - Minimum macOS: 14.0
@@ -244,7 +244,7 @@ TokenMeter 从这里读取 token：
 ~/.claude/ccmenubar/claude-token
 ```
 
-Home 路径解析会优先使用 `$HOME`，再回退到系统账号 home 和 `/Users/<username>`，避免 macOS 账号 home 与 shell `HOME` 不一致时读错位置。
+Home 路径解析会检查 `$HOME`、`FileManager.homeDirectoryForCurrentUser`、`NSHomeDirectory()`、`NSHomeDirectoryForUser`、POSIX 账户数据库 home 和 `/Users/<username>`，避免图形进程 `HOME` 与真实账户 home 不一致时读错位置，例如账户 home 在外置盘上的情况。
 
 然后发送一个极小的 Anthropic Messages 请求：
 
@@ -363,7 +363,7 @@ OpenAI 公开 Codex 文档说明了计划用量窗口和 rate-limit 概念，但
 `build.sh` 会生成 `TokenMeter.app`：
 
 - Bundle ID：`com.tokenmeter.TokenMeter`
-- 版本：`2.0.5`
+- 版本：`2.0.6`
 - App 图标：由 `assets/app-icon.png` 生成
 - 菜单栏代理：`LSUIElement=true`
 - 最低 macOS：14.0
