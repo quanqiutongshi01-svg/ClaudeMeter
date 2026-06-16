@@ -139,6 +139,19 @@ enum MenuBarDisplayMode: String, CaseIterable, Identifiable {
     }
 }
 
+enum LatencyDisplaySetting {
+    static let defaultsKey = "showLatency"
+
+    static func load() -> Bool {
+        if UserDefaults.standard.object(forKey: defaultsKey) == nil { return true }
+        return UserDefaults.standard.bool(forKey: defaultsKey)
+    }
+
+    static func save(_ value: Bool) {
+        UserDefaults.standard.set(value, forKey: defaultsKey)
+    }
+}
+
 struct TaskItem: Codable, Identifiable {
     let id: String
     let subject: String?
@@ -155,6 +168,9 @@ final class UsageState: ObservableObject {
     @Published var codexActionMessage: String?
     @Published var menuBarMode: MenuBarDisplayMode = MenuBarDisplayMode.load() {
         didSet { menuBarMode.save() }
+    }
+    @Published var showLatency: Bool = LatencyDisplaySetting.load() {
+        didSet { LatencyDisplaySetting.save(showLatency) }
     }
 }
 
@@ -701,8 +717,9 @@ enum Fetcher {
         return items
     }
 
-    static func fetchAll() -> FetchResult {
-        let providers = LatencyProbe.apply(to: [ClaudeFetcher.fetch(), CodexFetcher.fetch()])
+    static func fetchAll(showLatency: Bool) -> FetchResult {
+        let baseProviders = [ClaudeFetcher.fetch(), CodexFetcher.fetch()]
+        let providers = showLatency ? LatencyProbe.apply(to: baseProviders) : baseProviders
         return FetchResult(
             providers: providers,
             tasks: fetchTasks()
@@ -751,6 +768,7 @@ struct UsageBar: View {
 
 struct ProviderCard: View {
     var provider: ProviderUsage
+    var showLatency: Bool
     var codexActionMessage: String?
     var onOpenCodex: () -> Void
 
@@ -791,7 +809,7 @@ struct ProviderCard: View {
                     .truncationMode(.middle)
             }
 
-            if let latency = provider.latency {
+            if showLatency, let latency = provider.latency {
                 HStack(spacing: 6) {
                     Image(systemName: "point.3.connected.trianglepath.dotted")
                         .font(.system(size: 9, weight: .semibold))
@@ -924,7 +942,7 @@ struct PanelView: View {
     var onRefresh: () -> Void
     var onQuit: () -> Void
     var onOpenCodex: () -> Void
-    var onMenuBarModeChange: () -> Void
+    var onSettingsChange: () -> Void
     var preview: Bool = false
 
     @State private var launchAtLogin = (SMAppService.mainApp.status == .enabled)
@@ -940,6 +958,7 @@ struct PanelView: View {
             ForEach(state.providers) { provider in
                 ProviderCard(
                     provider: provider,
+                    showLatency: state.showLatency,
                     codexActionMessage: provider.id == "codex" ? state.codexActionMessage : nil,
                     onOpenCodex: onOpenCodex
                 )
@@ -1038,8 +1057,35 @@ struct PanelView: View {
                     .foregroundColor(.white.opacity(0.62))
                 Spacer()
                 MenuBarModeControl(selection: $state.menuBarMode) {
-                    onMenuBarModeChange()
+                    onSettingsChange()
                 }
+            }
+            HStack(spacing: 8) {
+                Image(systemName: "point.3.connected.trianglepath.dotted")
+                    .font(.system(size: 11))
+                    .foregroundColor(.white.opacity(0.65))
+                Text("Latency")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.white.opacity(0.62))
+                Spacer()
+                Button {
+                    state.showLatency.toggle()
+                    onSettingsChange()
+                } label: {
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(state.showLatency ? Color(red: 0.30, green: 0.85, blue: 0.46) : Color.white.opacity(0.22))
+                            .frame(width: 7, height: 7)
+                        Text(state.showLatency ? "On" : "Off")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.white.opacity(0.08))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .foregroundColor(.white.opacity(0.75))
+                }
+                .buttonStyle(.plain)
             }
             Divider().overlay(Color.white.opacity(0.12))
             HStack {
@@ -1135,8 +1181,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onRefresh: { [weak self] in self?.refresh() },
             onQuit: { NSApp.terminate(nil) },
             onOpenCodex: { [weak self] in self?.openCodex() },
-            onMenuBarModeChange: { [weak self] in
+            onSettingsChange: { [weak self] in
                 self?.updateStatusTitle()
+                self?.refresh()
                 if self?.panel.isVisible == true { self?.refitPanel() }
             }
         )
@@ -1195,9 +1242,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if state.loading { return }
         state.loading = true
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let result = Fetcher.fetchAll()
+            guard let self else { return }
+            let result = Fetcher.fetchAll(showLatency: self.state.showLatency)
             DispatchQueue.main.async {
-                guard let self else { return }
                 self.apply(result)
                 self.state.loading = false
             }
@@ -1264,11 +1311,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch state.menuBarMode {
         case .fiveHour:
             let fiveHour = fmtPct(left(for: provider, windowID: "5h"))
-            return "\(prefix)\(provider.shortName) \(fiveHour) \(fmtLatency(provider.latency))"
+            if state.showLatency {
+                return "\(prefix)\(provider.shortName) \(fiveHour) \(fmtLatency(provider.latency))"
+            }
+            return "\(prefix)\(provider.shortName) \(fiveHour)"
         case .fiveHourAndWeekly:
             let fiveHour = fmtPct(left(for: provider, windowID: "5h"))
             let weekly = fmtPct(left(for: provider, windowID: "weekly"))
-            return "\(prefix)\(provider.shortName) \(fiveHour)/\(weekly) \(fmtLatency(provider.latency))"
+            if state.showLatency {
+                return "\(prefix)\(provider.shortName) \(fiveHour)/\(weekly) \(fmtLatency(provider.latency))"
+            }
+            return "\(prefix)\(provider.shortName) \(fiveHour)/\(weekly)"
         }
     }
 
@@ -1330,9 +1383,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func menuBarTooltip() -> String {
         switch state.menuBarMode {
         case .fiveHour:
-            return "TokenMeter shows remaining 5-hour quota and HTTPS latency. Orange <=20%, red <=10%."
+            return state.showLatency
+                ? "TokenMeter shows remaining 5-hour quota and HTTPS latency. Orange <=20%, red <=10%."
+                : "TokenMeter shows remaining 5-hour quota. Orange <=20%, red <=10%."
         case .fiveHourAndWeekly:
-            return "TokenMeter shows remaining 5-hour/weekly quota and HTTPS latency. Orange <=20%, red <=10%."
+            return state.showLatency
+                ? "TokenMeter shows remaining 5-hour/weekly quota and HTTPS latency. Orange <=20%, red <=10%."
+                : "TokenMeter shows remaining 5-hour/weekly quota. Orange <=20%, red <=10%."
         }
     }
 
@@ -1383,8 +1440,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 enum RenderMode {
     @MainActor static func run(to path: String) {
-        let result = Fetcher.fetchAll()
         let state = UsageState()
+        let result = Fetcher.fetchAll(showLatency: state.showLatency)
         state.providers = result.providers
         state.tasks = result.tasks
         state.lastUpdate = Date()
@@ -1400,7 +1457,7 @@ enum RenderMode {
                 onRefresh: {},
                 onQuit: {},
                 onOpenCodex: {},
-                onMenuBarModeChange: {},
+                onSettingsChange: {},
                 preview: true
             )
                 .padding(36)

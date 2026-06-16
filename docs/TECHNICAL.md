@@ -168,14 +168,14 @@ This keeps TokenMeter honest:
 - no scraping browser sessions or private storage;
 - clear stale/unavailable state when the local snapshot is old.
 
-Latency probes are separate from quota probes. TokenMeter sends unauthenticated HTTPS `HEAD` requests to `https://api.anthropic.com/` and `https://chatgpt.com/backend-api/`, measures the round-trip time, and displays the result in milliseconds. These probes do not include user tokens and do not start model turns.
+Latency probes are separate from quota probes. TokenMeter sends unauthenticated HTTPS `HEAD` requests to `https://api.anthropic.com/` and `https://chatgpt.com/backend-api/`, measures the round-trip time, and displays the result in milliseconds. These probes do not include user tokens and do not start model turns. Users can disable latency display from the floating panel; when disabled, TokenMeter skips the latency probes entirely.
 
 ## 6. Build
 
 `build.sh` produces `TokenMeter.app`:
 
 - Bundle ID: `com.tokenmeter.TokenMeter`
-- Version: `2.0.7`
+- Version: `2.0.8`
 - App icon: generated from `assets/app-icon.png`
 - Menu-bar agent: `LSUIElement=true`
 - Minimum macOS: 14.0
@@ -360,14 +360,14 @@ OpenAI 公开 Codex 文档说明了计划用量窗口和 rate-limit 概念，但
 - 不抓浏览器会话或私有存储；
 - 本机快照过旧时明确显示 stale/unavailable。
 
-延迟探测与额度探测分开处理。TokenMeter 会向 `https://api.anthropic.com/` 和 `https://chatgpt.com/backend-api/` 发送不带认证信息的 HTTPS `HEAD` 请求，测量往返时间并以毫秒显示。这个探测不包含用户 token，也不会启动模型请求。
+延迟探测与额度探测分开处理。TokenMeter 会向 `https://api.anthropic.com/` 和 `https://chatgpt.com/backend-api/` 发送不带认证信息的 HTTPS `HEAD` 请求，测量往返时间并以毫秒显示。这个探测不包含用户 token，也不会启动模型请求。用户可以在浮窗里关闭延迟显示；关闭后，TokenMeter 会直接跳过延迟探测。
 
 ## 6. 构建
 
 `build.sh` 会生成 `TokenMeter.app`：
 
 - Bundle ID：`com.tokenmeter.TokenMeter`
-- 版本：`2.0.7`
+- 版本：`2.0.8`
 - App 图标：由 `assets/app-icon.png` 生成
 - 菜单栏代理：`LSUIElement=true`
 - 最低 macOS：14.0
