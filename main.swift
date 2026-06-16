@@ -48,6 +48,12 @@ func fmtAge(_ date: Date?) -> String {
     return "\(h / 24)d ago"
 }
 
+func fmtLatency(_ sample: LatencySample?) -> String {
+    guard let sample else { return "--ms" }
+    if let milliseconds = sample.milliseconds { return "\(milliseconds)ms" }
+    return "timeout"
+}
+
 // MARK: - Models
 
 enum ProviderFreshness: String {
@@ -68,6 +74,12 @@ struct UsageWindow: Identifiable {
     var windowMinutes: Int?
 }
 
+struct LatencySample {
+    var endpoint: String
+    var milliseconds: Int?
+    var error: String?
+}
+
 struct ProviderUsage: Identifiable {
     let id: String
     let name: String
@@ -82,6 +94,7 @@ struct ProviderUsage: Identifiable {
     var limitReached: Bool?
     var error: String?
     var hint: String?
+    var latency: LatencySample? = nil
 
     var worstUsed: Double? {
         let values = windows.compactMap(\.used)
@@ -611,6 +624,55 @@ enum CodexFetcher {
 
 // MARK: - Shared fetcher
 
+enum LatencyProbe {
+    static let endpoints: [String: (label: String, url: URL)] = [
+        "claude": ("api.anthropic.com", URL(string: "https://api.anthropic.com/")!),
+        "codex": ("chatgpt.com/backend-api", URL(string: "https://chatgpt.com/backend-api/")!)
+    ]
+
+    static func apply(to providers: [ProviderUsage]) -> [ProviderUsage] {
+        var result = providers
+        for index in result.indices {
+            guard let endpoint = endpoints[result[index].id] else { continue }
+            result[index].latency = measure(label: endpoint.label, url: endpoint.url)
+        }
+        return result
+    }
+
+    private static func measure(label: String, url: URL) -> LatencySample {
+        var request = URLRequest(url: url)
+        request.httpMethod = "HEAD"
+        request.timeoutInterval = 4
+        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 4
+        config.timeoutIntervalForResource = 4
+        let session = URLSession(configuration: config)
+        let semaphore = DispatchSemaphore(value: 0)
+        let start = DispatchTime.now()
+        var sample = LatencySample(endpoint: label, milliseconds: nil, error: nil)
+
+        session.dataTask(with: request) { _, response, error in
+            defer { semaphore.signal() }
+            let elapsed = DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds
+            if response != nil {
+                sample.milliseconds = Int((Double(elapsed) / 1_000_000.0).rounded())
+            } else if let error {
+                sample.error = error.localizedDescription
+            } else {
+                sample.error = "No response"
+            }
+        }.resume()
+
+        if semaphore.wait(timeout: .now() + 5) == .timedOut {
+            sample.error = "Timeout"
+        }
+        session.invalidateAndCancel()
+        return sample
+    }
+}
+
 enum Fetcher {
     static func fetchTasks() -> [TaskItem] {
         let fm = FileManager.default
@@ -640,8 +702,9 @@ enum Fetcher {
     }
 
     static func fetchAll() -> FetchResult {
-        FetchResult(
-            providers: [ClaudeFetcher.fetch(), CodexFetcher.fetch()],
+        let providers = LatencyProbe.apply(to: [ClaudeFetcher.fetch(), CodexFetcher.fetch()])
+        return FetchResult(
+            providers: providers,
             tasks: fetchTasks()
         )
     }
@@ -728,6 +791,18 @@ struct ProviderCard: View {
                     .truncationMode(.middle)
             }
 
+            if let latency = provider.latency {
+                HStack(spacing: 6) {
+                    Image(systemName: "point.3.connected.trianglepath.dotted")
+                        .font(.system(size: 9, weight: .semibold))
+                    Text("Latency: \(fmtLatency(latency)) · \(latency.endpoint)")
+                        .font(.system(size: 9))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                .foregroundColor(latencyColor(latency).opacity(0.82))
+            }
+
             if let error = provider.error {
                 Text(error)
                     .font(.system(size: 10))
@@ -778,6 +853,15 @@ struct ProviderCard: View {
         case .stale: return Color(red: 0.98, green: 0.78, blue: 0.24)
         case .missingToken, .unavailable, .error: return Color(red: 0.98, green: 0.52, blue: 0.32)
         }
+    }
+
+    private func latencyColor(_ latency: LatencySample) -> Color {
+        guard let milliseconds = latency.milliseconds else {
+            return Color(red: 0.98, green: 0.52, blue: 0.32)
+        }
+        if milliseconds <= 300 { return Color(red: 0.30, green: 0.85, blue: 0.46) }
+        if milliseconds <= 1000 { return Color(red: 0.98, green: 0.78, blue: 0.24) }
+        return Color(red: 0.98, green: 0.52, blue: 0.32)
     }
 
     private func windowRow(_ window: UsageWindow) -> some View {
@@ -1179,11 +1263,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         switch state.menuBarMode {
         case .fiveHour:
-            return "\(prefix)\(provider.shortName) \(fmtPct(left(for: provider, windowID: "5h")))"
+            let fiveHour = fmtPct(left(for: provider, windowID: "5h"))
+            return "\(prefix)\(provider.shortName) \(fiveHour) \(fmtLatency(provider.latency))"
         case .fiveHourAndWeekly:
             let fiveHour = fmtPct(left(for: provider, windowID: "5h"))
             let weekly = fmtPct(left(for: provider, windowID: "weekly"))
-            return "\(prefix)\(provider.shortName) \(fiveHour)/\(weekly)"
+            return "\(prefix)\(provider.shortName) \(fiveHour)/\(weekly) \(fmtLatency(provider.latency))"
         }
     }
 
@@ -1245,9 +1330,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func menuBarTooltip() -> String {
         switch state.menuBarMode {
         case .fiveHour:
-            return "TokenMeter shows remaining 5-hour quota. Orange <=20%, red <=10%."
+            return "TokenMeter shows remaining 5-hour quota and HTTPS latency. Orange <=20%, red <=10%."
         case .fiveHourAndWeekly:
-            return "TokenMeter shows remaining 5-hour/weekly quota. Orange <=20%, red <=10%."
+            return "TokenMeter shows remaining 5-hour/weekly quota and HTTPS latency. Orange <=20%, red <=10%."
         }
     }
 
