@@ -138,9 +138,12 @@ Mapping:
 
 - `primary` -> 5-hour Codex window.
 - `secondary` -> weekly Codex window.
+- `additional_rate_limits.*.primary/secondary` -> model-specific 5-hour/weekly windows.
 - `used_percent` is normalized to a `0...1` fraction for UI rendering.
 - `reset_at` is epoch seconds.
 - `observedAt` is inferred as `reset_at - reset_after_seconds`.
+
+When model-specific `additional_rate_limits` exist, TokenMeter computes an effective Codex window by choosing the candidate with the highest `used_percent` for the same window type. This intentionally shows the tightest remaining quota, because that is the bucket most likely to block future Codex usage.
 
 ## 4. Codex Freshness
 
@@ -170,7 +173,7 @@ This keeps TokenMeter honest:
 `build.sh` produces `TokenMeter.app`:
 
 - Bundle ID: `com.tokenmeter.TokenMeter`
-- Version: `2.0.4`
+- Version: `2.0.5`
 - App icon: generated from `assets/app-icon.png`
 - Menu-bar agent: `LSUIElement=true`
 - Minimum macOS: 14.0
@@ -325,9 +328,12 @@ websocket event:
 
 - `primary` -> Codex 5 小时窗口。
 - `secondary` -> Codex 每周窗口。
+- `additional_rate_limits.*.primary/secondary` -> 模型级 5 小时/每周窗口。
 - `used_percent` 会转为 `0...1` 小数，供 UI 渲染。
 - `reset_at` 是 epoch 秒。
 - `observedAt` 通过 `reset_at - reset_after_seconds` 推断。
+
+当存在模型级 `additional_rate_limits` 时，TokenMeter 会对同一窗口类型选择 `used_percent` 最高的候选窗口，作为 Codex 的有效窗口。这是有意采取的保守口径：显示最紧的剩余额度，因为它最可能先限制后续 Codex 使用。
 
 ## 4. Codex 新鲜度
 
@@ -357,7 +363,7 @@ OpenAI 公开 Codex 文档说明了计划用量窗口和 rate-limit 概念，但
 `build.sh` 会生成 `TokenMeter.app`：
 
 - Bundle ID：`com.tokenmeter.TokenMeter`
-- 版本：`2.0.4`
+- 版本：`2.0.5`
 - App 图标：由 `assets/app-icon.png` 生成
 - 菜单栏代理：`LSUIElement=true`
 - 最低 macOS：14.0

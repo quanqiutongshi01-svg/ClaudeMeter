@@ -370,6 +370,7 @@ enum CodexFetcher {
         var limitReached: Bool?
         var primary: UsageWindow
         var secondary: UsageWindow
+        var usedAdditionalLimits: Bool
         var observedAt: Date?
     }
 
@@ -413,7 +414,7 @@ enum CodexFetcher {
             name: "Codex",
             shortName: "Cx",
             icon: "terminal",
-            source: source,
+            source: event.usedAdditionalLimits ? "\(source) · effective limit" : source,
             badge: badge,
             freshness: freshness,
             windows: windows,
@@ -499,18 +500,58 @@ enum CodexFetcher {
         guard let primaryDict = limits["primary"] as? [String: Any],
               let secondaryDict = limits["secondary"] as? [String: Any] else { return nil }
 
-        let primary = parseWindow(id: "5h", title: "5-hour window", icon: "clock.fill", dict: primaryDict)
-        let secondary = parseWindow(id: "weekly", title: "Weekly window", icon: "calendar", dict: secondaryDict)
+        var primaryCandidates = [
+            parseWindow(id: "5h", title: "5-hour window", icon: "clock.fill", dict: primaryDict)
+        ]
+        var secondaryCandidates = [
+            parseWindow(id: "weekly", title: "Weekly window", icon: "calendar", dict: secondaryDict)
+        ]
+        var allowed = boolValue(limits["allowed"])
+        var limitReached = boolValue(limits["limit_reached"])
+        var usedAdditionalLimits = false
+
+        if let additional = root["additional_rate_limits"] as? [String: Any] {
+            for (_, value) in additional {
+                guard let bucket = value as? [String: Any] else { continue }
+                if boolValue(bucket["allowed"]) == false { allowed = false }
+                if boolValue(bucket["limit_reached"]) == true { limitReached = true }
+                if let dict = bucket["primary"] as? [String: Any] {
+                    primaryCandidates.append(parseWindow(id: "5h", title: "5-hour window", icon: "clock.fill", dict: dict))
+                    usedAdditionalLimits = true
+                }
+                if let dict = bucket["secondary"] as? [String: Any] {
+                    secondaryCandidates.append(parseWindow(id: "weekly", title: "Weekly window", icon: "calendar", dict: dict))
+                    usedAdditionalLimits = true
+                }
+            }
+        }
+
+        let primary = effectiveWindow(from: primaryCandidates, fallback: primaryCandidates[0])
+        let secondary = effectiveWindow(from: secondaryCandidates, fallback: secondaryCandidates[0])
         let observed = observedAt(primaryDict: primaryDict, secondaryDict: secondaryDict)
 
         return CodexEvent(
             planType: root["plan_type"] as? String,
-            allowed: boolValue(limits["allowed"]),
-            limitReached: boolValue(limits["limit_reached"]),
+            allowed: allowed,
+            limitReached: limitReached,
             primary: primary,
             secondary: secondary,
+            usedAdditionalLimits: usedAdditionalLimits,
             observedAt: observed
         )
+    }
+
+    private static func effectiveWindow(from windows: [UsageWindow], fallback: UsageWindow) -> UsageWindow {
+        windows.max { lhs, rhs in
+            let lhsUsed = lhs.used ?? -1
+            let rhsUsed = rhs.used ?? -1
+            if lhsUsed == rhsUsed {
+                let lhsReset = lhs.reset?.timeIntervalSince1970 ?? Double.greatestFiniteMagnitude
+                let rhsReset = rhs.reset?.timeIntervalSince1970 ?? Double.greatestFiniteMagnitude
+                return lhsReset > rhsReset
+            }
+            return lhsUsed < rhsUsed
+        } ?? fallback
     }
 
     private static func parseWindow(id: String, title: String, icon: String, dict: [String: Any]) -> UsageWindow {
